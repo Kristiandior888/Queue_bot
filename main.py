@@ -1,23 +1,26 @@
 import logging
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application, CommandHandler, CallbackQueryHandler, 
+    ContextTypes, MessageHandler, filters
+)
 from telegram.constants import ParseMode
 from collections import deque
 import json
-import os
 
 # Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+logger = logging.getLogger(__name__)
 
 # Файл для хранения очереди
 QUEUE_FILE = 'queue.json'
 
 # Словарь для временного хранения фамилий
 pending_surnames = {}
-
 
 class StudentQueue:
     def __init__(self):
@@ -73,18 +76,24 @@ class StudentQueue:
 
     def save_queue(self):
         """Сохранение очереди в файл"""
-        with open(QUEUE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(list(self.queue), f, ensure_ascii=False, indent=2)
+        try:
+            with open(QUEUE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(list(self.queue), f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"Ошибка сохранения очереди: {e}")
 
     def load_queue(self):
         """Загрузка очереди из файла"""
-        if os.path.exists(QUEUE_FILE):
-            try:
+        try:
+            if os.path.exists(QUEUE_FILE):
                 with open(QUEUE_FILE, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     self.queue = deque(data)
-            except (json.JSONDecodeError, Exception):
+            else:
                 self.queue = deque()
+        except Exception as e:
+            logger.error(f"Ошибка загрузки очереди: {e}")
+            self.queue = deque()
 
     def migrate_old_data(self):
         """Миграция старых данных - добавление поля surname если его нет"""
@@ -93,17 +102,16 @@ class StudentQueue:
             if 'surname' not in student:
                 student['surname'] = ""
                 migrated = True
-
+        
         if migrated:
             self.save_queue()
-            print("Мигрированы старые данные: добавлено поле surname")
+            logger.info("Мигрированы старые данные: добавлено поле surname")
 
     def add_pre_existing_students(self, students_list):
         """Добавление студентов, которые уже были в очереди до создания бота"""
         for student_data in students_list:
-            # student_data должен быть словарем с полями: first_name, surname, username (опционально)
             student = {
-                'user_id': None,  # У очных студентов нет user_id
+                'user_id': None,
                 'username': student_data.get('username', student_data['first_name']),
                 'first_name': student_data['first_name'],
                 'surname': student_data['surname']
@@ -111,10 +119,8 @@ class StudentQueue:
             self.queue.append(student)
         self.save_queue()
 
-
 # Создаем экземпляр очереди
 student_queue = StudentQueue()
-
 
 # Вспомогательная функция для получения отображаемого имени
 def get_display_name(student):
@@ -122,27 +128,11 @@ def get_display_name(student):
     surname = student.get('surname', '')
     first_name = student.get('first_name', '')
     username = student.get('username', '')
-
+    
     if surname:
         return f"{surname} {first_name}"
     else:
         return f"{first_name} ({username})"
-
-
-# Создаем меню команд
-async def set_commands(application: Application):
-    """Устанавливаем меню команд в интерфейсе бота"""
-    commands = [
-        ("start", "Запустить бота"),
-        ("join", "Встать в очередь"),
-        ("leave", "Покинуть очередь"),
-        ("queue", "Показать очередь"),
-        ("position", "Моя позиция"),
-        ("next", "Следующий студент (для преподавателя)"),
-        ("help", "Помощь и инструкция")
-    ]
-    await application.bot.set_my_commands(commands)
-
 
 # Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -161,8 +151,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /next - Убрать первого студента (для преподавателя)
 /help - Помощь по использованию
 
-Используй меню команд слева от поля ввода сообщения ⬅️
-
 <em>Или воспользуйся кнопками ниже для быстрого доступа:</em>
     """
 
@@ -177,7 +165,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-
 
 # Команда /help
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -211,15 +198,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(help_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
 
-
 # Обработчик ввода фамилии
 async def handle_surname_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     surname = update.message.text.strip()
-
+    
     if user.id in pending_surnames:
         username = f"@{user.username}" if user.username else user.first_name
-
+        
         if student_queue.add_student(user.id, username, user.first_name, surname):
             position = student_queue.get_position(user.id)
             total = len(student_queue.get_queue())
@@ -244,8 +230,7 @@ async def handle_surname_input(update: Update, context: ContextTypes.DEFAULT_TYP
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             await update.message.reply_text(success_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-
-            # Удаляем пользователя из ожидающих ввод
+            
             del pending_surnames[user.id]
         else:
             await update.message.reply_text(
@@ -253,27 +238,23 @@ async def handle_surname_input(update: Update, context: ContextTypes.DEFAULT_TYP
                 parse_mode=ParseMode.HTML)
             del pending_surnames[user.id]
 
-
 # Команда встать в очередь
 async def join_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-
-    # Проверяем, не находится ли пользователь уже в очереди
+    
     if student_queue.get_position(user.id):
         await update.message.reply_text(
             "❌ <strong>Ты уже в очереди!</strong>\nИспользуй /position чтобы узнать свою позицию",
             parse_mode=ParseMode.HTML)
         return
-
-    # Добавляем пользователя в ожидание ввода фамилии
+    
     pending_surnames[user.id] = True
-
+    
     await update.message.reply_text(
         "📝 <strong>Пожалуйста, введи свою фамилию:</strong>\n\n"
         "<em>Это нужно для того, чтобы преподаватель мог идентифицировать тебя</em>",
         parse_mode=ParseMode.HTML
     )
-
 
 # Команда покинуть очередь
 async def leave_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -283,7 +264,6 @@ async def leave_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ <strong>Ты удален из очереди!</strong>", parse_mode=ParseMode.HTML)
     else:
         await update.message.reply_text("❌ <strong>Тебя нет в очереди!</strong>", parse_mode=ParseMode.HTML)
-
 
 # Команда показать очередь
 async def show_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -317,7 +297,6 @@ async def show_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(queue_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
 
-
 # Команда узнать свою позицию
 async def get_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -330,7 +309,7 @@ async def get_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if student['user_id'] == user.id:
                 student_data = student
                 break
-
+        
         position_text = f"""
 🔍 <strong>Информация о твоей позиции:</strong>
 
@@ -356,7 +335,6 @@ async def get_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML
         )
 
-
 # Команда для перехода к следующему студенту
 async def next_student(update: Update, context: ContextTypes.DEFAULT_TYPE):
     removed_student = student_queue.remove_first()
@@ -365,7 +343,7 @@ async def next_student(update: Update, context: ContextTypes.DEFAULT_TYPE):
         queue = student_queue.get_queue()
 
         display_name = get_display_name(removed_student)
-
+        
         next_text = f"""
 ✅ <strong>Студент удален из очереди!</strong>
 
@@ -378,13 +356,15 @@ async def next_student(update: Update, context: ContextTypes.DEFAULT_TYPE):
             next_display_name = get_display_name(next_student)
             next_text += f"\n🎯 <strong>Следующий:</strong> {next_display_name}"
 
-            # Уведомляем следующего студента (только если у него есть user_id)
             if next_student.get('user_id'):
-                await context.bot.send_message(
-                    chat_id=next_student['user_id'],
-                    text="🎯 <strong>Ты следующий в очереди! Подготовься к сдаче.</strong>",
-                    parse_mode=ParseMode.HTML
-                )
+                try:
+                    await context.bot.send_message(
+                        chat_id=next_student['user_id'],
+                        text="🎯 <strong>Ты следующий в очереди! Подготовься к сдаче.</strong>",
+                        parse_mode=ParseMode.HTML
+                    )
+                except Exception as e:
+                    logger.error(f"Не удалось отправить уведомление: {e}")
 
         keyboard = [
             [InlineKeyboardButton("📋 Показать очередь", callback_data="queue")],
@@ -397,7 +377,6 @@ async def next_student(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ <strong>Очередь пуста!</strong>", parse_mode=ParseMode.HTML)
 
-
 # Обработчик нажатий на кнопки
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -406,14 +385,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
 
     if query.data == "join":
-        # Проверяем, не находится ли пользователь уже в очереди
         if student_queue.get_position(user.id):
             await query.edit_message_text("❌ <strong>Ты уже в очереди!</strong>", parse_mode=ParseMode.HTML)
             return
-
-        # Добавляем пользователя в ожидание ввода фамилии
+        
         pending_surnames[user.id] = True
-
+        
         await query.edit_message_text(
             "📝 <strong>Пожалуйста, введи свою фамилию:</strong>\n\n"
             "<em>Это нужно для того, чтобы преподаватель мог идентифицировать тебя</em>",
@@ -465,7 +442,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if student['user_id'] == user.id:
                     student_data = student
                     break
-
+            
             position_text = f"""
 🔍 <strong>Информация о твоей позиции:</strong>
 
@@ -492,7 +469,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             queue = student_queue.get_queue()
 
             display_name = get_display_name(removed_student)
-
+            
             next_text = f"""
 ✅ <strong>Студент удален из очереди!</strong>
 
@@ -560,60 +537,40 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_text(welcome_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
 
-
-# Функция для добавления очных студентов
-def add_pre_existing_students():
-    """Добавляет студентов, которые уже были в очереди до создания бота"""
-    pre_existing_students = [
-        {"first_name": "Иван", "surname": "Иванов"},
-        {"first_name": "Петр", "surname": "Петров"},
-        {"first_name": "Мария", "surname": "Сидорова"},
-        # Добавь здесь студентов, которые уже были в очереди
-        # Формат: {"first_name": "Имя", "surname": "Фамилия"}
-    ]
-
-    student_queue.add_pre_existing_students(pre_existing_students)
-    print(f"Добавлено {len(pre_existing_students)} очных студентов в очередь")
-
-
 # Главная функция
 def main():
-    # Получаем токен из переменных окружения
     TOKEN = os.getenv("BOT_TOKEN")
     
     if not TOKEN:
-        print("❌ Ошибка: BOT_TOKEN не установлен!")
+        logger.error("❌ Ошибка: BOT_TOKEN не установлен!")
         return
 
-    application = Application.builder().token(TOKEN).build()
-
-    # Устанавливаем меню команд
-    application.post_init = set_commands
-
-    # Добавляем обработчики команд
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("join", join_queue))
-    application.add_handler(CommandHandler("leave", leave_queue))
-    application.add_handler(CommandHandler("queue", show_queue))
-    application.add_handler(CommandHandler("position", get_position))
-    application.add_handler(CommandHandler("next", next_student))
-
-    # Добавляем обработчик текстовых сообщений (для ввода фамилии)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_surname_input))
-
-    # Добавляем обработчик кнопок
-    application.add_handler(CallbackQueryHandler(button_handler))
-
-    # Запускаем бота
-    print("🚀 Бот запущен на Railway...")
-    
     try:
-        application.run_polling()
-    except Exception as e:
-        print(f"❌ Ошибка при запуске бота: {e}")
+        # Создаем Application
+        application = Application.builder().token(TOKEN).build()
 
+        # Добавляем обработчики команд
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("join", join_queue))
+        application.add_handler(CommandHandler("leave", leave_queue))
+        application.add_handler(CommandHandler("queue", show_queue))
+        application.add_handler(CommandHandler("position", get_position))
+        application.add_handler(CommandHandler("next", next_student))
+
+        # Добавляем обработчик текстовых сообщений
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_surname_input))
+
+        # Добавляем обработчик кнопок
+        application.add_handler(CallbackQueryHandler(button_handler))
+
+        # Запускаем бота
+        logger.info("🚀 Бот запущен на Railway...")
+        application.run_polling()
+        
+    except Exception as e:
+        logger.error(f"❌ Критическая ошибка: {e}")
+        raise
 
 if __name__ == '__main__':
-
     main()
