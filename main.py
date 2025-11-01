@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 # Файл для хранения очереди
 QUEUE_FILE = 'queue.json'
 
+# ID администратора (твой Telegram ID)
+ADMIN_ID = 797023520  # ЗАМЕНИ ЭТОТ ID НА СВОЙ
+
 # Словарь для временного хранения фамилий
 pending_surnames = {}
 
@@ -107,20 +110,13 @@ class StudentQueue:
             self.save_queue()
             logger.info("Мигрированы старые данные: добавлено поле surname")
 
-    def add_pre_existing_students(self, students_list):
-        """Добавление студентов, которые уже были в очереди до создания бота"""
-        for student_data in students_list:
-            student = {
-                'user_id': None,
-                'username': student_data.get('username', student_data['first_name']),
-                'first_name': student_data['first_name'],
-                'surname': student_data['surname']
-            }
-            self.queue.append(student)
-        self.save_queue()
-
 # Создаем экземпляр очереди
 student_queue = StudentQueue()
+
+# Функция проверки прав администратора
+def is_admin(user_id: int) -> bool:
+    """Проверяет, является ли пользователь администратором"""
+    return user_id == ADMIN_ID
 
 # Вспомогательная функция для получения отображаемого имени
 def get_display_name(student):
@@ -148,8 +144,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /leave - Покинуть очередь  
 /queue - Показать текущую очередь
 /position - Узнать свою позицию
-/next - Убрать первого студента (для преподавателя)
 /help - Помощь по использованию
+    """
+
+    # Для администратора добавляем команду next
+    if is_admin(user.id):
+        welcome_text += "\n/next - Следующий студент (только для преподавателя)"
+        welcome_text += "\n/admin - Панель управления"
+
+    welcome_text += """
 
 <em>Или воспользуйся кнопками ниже для быстрого доступа:</em>
     """
@@ -159,15 +162,56 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("❌ Покинуть очередь", callback_data="leave")],
         [InlineKeyboardButton("📋 Показать очередь", callback_data="queue")],
         [InlineKeyboardButton("🔍 Моя позиция", callback_data="position")],
-        [InlineKeyboardButton("✅ Следующий студент", callback_data="next")],
-        [InlineKeyboardButton("ℹ️ Помощь", callback_data="help")]
     ]
+
+    # Только для администратора показываем кнопку "Следующий студент"
+    if is_admin(user.id):
+        keyboard.append([InlineKeyboardButton("✅ Следующий студент", callback_data="next")])
+        keyboard.append([InlineKeyboardButton("⚙️ Панель управления", callback_data="admin")])
+
+    keyboard.append([InlineKeyboardButton("ℹ️ Помощь", callback_data="help")])
+
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
 
+# Команда /admin - только для администратора
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    
+    if not is_admin(user.id):
+        await update.message.reply_text("❌ <strong>У вас нет прав доступа к этой команде!</strong>", parse_mode=ParseMode.HTML)
+        return
+
+    queue = student_queue.get_queue()
+    total_students = len(queue)
+    
+    admin_text = f"""
+⚙️ <strong>Панель управления преподавателя</strong>
+
+📊 <strong>Статистика:</strong>
+👥 Студентов в очереди: <strong>{total_students}</strong>
+
+🛠️ <strong>Действия:</strong>
+• Используй /next чтобы вызвать следующего студента
+• Просматривай очередь командой /queue
+• Управляй через кнопки ниже
+    """
+
+    keyboard = [
+        [InlineKeyboardButton("✅ Следующий студент", callback_data="next")],
+        [InlineKeyboardButton("📋 Показать очередь", callback_data="queue")],
+        [InlineKeyboardButton("🔄 Обновить статистику", callback_data="admin")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(admin_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+
 # Команда /help
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    
     help_text = """
 <strong>📖 Инструкция по использованию бота:</strong>
 
@@ -176,24 +220,30 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ✅ <strong>/leave</strong> - выйти из очереди (если передумал)
 ✅ <strong>/queue</strong> - посмотреть всю очередь
 ✅ <strong>/position</strong> - узнать свою позицию
+    """
 
+    # Для администратора добавляем информацию
+    if is_admin(user.id):
+        help_text += """
 <strong>Для преподавателя:</strong>
-👨‍🏫 <strong>/next</strong> - отметить, что текущий студент сдал работу и перейти к следующему
+👨‍🏫 <strong>/next</strong> - отметить, что текущий студент сдал работу
+👨‍🏫 <strong>/admin</strong> - открыть панель управления
+        """
 
-<strong>Как это работает:</strong>
-1. Студент встает в очередь командой /join
-2. Преподаватель вызывает студентов по порядку
-3. Когда студент сдал, преподаватель использует /next
-4. Следующий студент автоматически получает уведомление
-
+    help_text += """
 <em>Используй меню команд или кнопки для удобства!</em>
     """
 
     keyboard = [
         [InlineKeyboardButton("📝 Встать в очередь", callback_data="join")],
         [InlineKeyboardButton("📋 Показать очередь", callback_data="queue")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
     ]
+
+    if is_admin(user.id):
+        keyboard.append([InlineKeyboardButton("⚙️ Панель управления", callback_data="admin")])
+
+    keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
+
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(help_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
@@ -291,8 +341,14 @@ async def show_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📝 Встать в очередь", callback_data="join")],
         [InlineKeyboardButton("🔍 Моя позиция", callback_data="position")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
     ]
+
+    # Только для администратора добавляем кнопку управления
+    if is_admin(update.effective_user.id):
+        keyboard.append([InlineKeyboardButton("⚙️ Панель управления", callback_data="admin")])
+
+    keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
+
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(queue_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
@@ -335,8 +391,18 @@ async def get_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML
         )
 
-# Команда для перехода к следующему студенту
+# Команда для перехода к следующему студенту - ТОЛЬКО ДЛЯ АДМИНИСТРАТОРА
 async def next_student(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    
+    # Проверка прав доступа
+    if not is_admin(user.id):
+        await update.message.reply_text(
+            "❌ <strong>Эта команда доступна только преподавателю!</strong>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
     removed_student = student_queue.remove_first()
 
     if removed_student:
@@ -369,6 +435,7 @@ async def next_student(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [InlineKeyboardButton("📋 Показать очередь", callback_data="queue")],
             [InlineKeyboardButton("✅ Следующий", callback_data="next")],
+            [InlineKeyboardButton("⚙️ Панель управления", callback_data="admin")],
             [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -427,8 +494,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [InlineKeyboardButton("📝 Встать в очередь", callback_data="join")],
             [InlineKeyboardButton("🔍 Моя позиция", callback_data="position")],
-            [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
         ]
+
+        if is_admin(user.id):
+            keyboard.append([InlineKeyboardButton("⚙️ Панель управления", callback_data="admin")])
+
+        keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
+
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await query.edit_message_text(queue_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
@@ -464,6 +536,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ <strong>Тебя нет в очереди!</strong>", parse_mode=ParseMode.HTML)
 
     elif query.data == "next":
+        # Проверка прав доступа для кнопки "Следующий"
+        if not is_admin(user.id):
+            await query.edit_message_text(
+                "❌ <strong>Эта функция доступна только преподавателю!</strong>",
+                parse_mode=ParseMode.HTML
+            )
+            return
+
         removed_student = student_queue.remove_first()
         if removed_student:
             queue = student_queue.get_queue()
@@ -485,6 +565,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = [
                 [InlineKeyboardButton("📋 Показать очередь", callback_data="queue")],
                 [InlineKeyboardButton("✅ Следующий", callback_data="next")],
+                [InlineKeyboardButton("⚙️ Панель управления", callback_data="admin")],
                 [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -492,6 +573,39 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(next_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
         else:
             await query.edit_message_text("❌ <strong>Очередь пуста!</strong>", parse_mode=ParseMode.HTML)
+
+    elif query.data == "admin":
+        # Проверка прав доступа для админ-панели
+        if not is_admin(user.id):
+            await query.edit_message_text(
+                "❌ <strong>У вас нет прав доступа к панели управления!</strong>",
+                parse_mode=ParseMode.HTML
+            )
+            return
+
+        queue = student_queue.get_queue()
+        total_students = len(queue)
+        
+        admin_text = f"""
+⚙️ <strong>Панель управления преподавателя</strong>
+
+📊 <strong>Статистика:</strong>
+👥 Студентов в очереди: <strong>{total_students}</strong>
+
+🛠️ <strong>Действия:</strong>
+• Используй кнопку "Следующий студент" для вызова
+• Просматривай очередь через кнопку "Показать очередь"
+        """
+
+        keyboard = [
+            [InlineKeyboardButton("✅ Следующий студент", callback_data="next")],
+            [InlineKeyboardButton("📋 Показать очередь", callback_data="queue")],
+            [InlineKeyboardButton("🔄 Обновить статистику", callback_data="admin")],
+            [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(admin_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
 
     elif query.data == "help":
         help_text = """
@@ -502,16 +616,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ✅ <strong>/leave</strong> - выйти из очереди (если передумал)
 ✅ <strong>/queue</strong> - посмотреть всю очередь
 ✅ <strong>/position</strong> - узнать свою позицию
+        """
 
+        if is_admin(user.id):
+            help_text += """
 <strong>Для преподавателя:</strong>
 👨‍🏫 <strong>/next</strong> - отметить, что текущий студент сдал работу
-        """
+👨‍🏫 <strong>/admin</strong> - открыть панель управления
+            """
 
         keyboard = [
             [InlineKeyboardButton("📝 Встать в очередь", callback_data="join")],
             [InlineKeyboardButton("📋 Показать очередь", callback_data="queue")],
-            [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
         ]
+
+        if is_admin(user.id):
+            keyboard.append([InlineKeyboardButton("⚙️ Панель управления", callback_data="admin")])
+
+        keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
+
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await query.edit_message_text(help_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
@@ -530,9 +653,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("❌ Покинуть очередь", callback_data="leave")],
             [InlineKeyboardButton("📋 Показать очередь", callback_data="queue")],
             [InlineKeyboardButton("🔍 Моя позиция", callback_data="position")],
-            [InlineKeyboardButton("✅ Следующий студент", callback_data="next")],
-            [InlineKeyboardButton("ℹ️ Помощь", callback_data="help")]
         ]
+
+        # Только для администратора показываем кнопки управления
+        if is_admin(user.id):
+            keyboard.append([InlineKeyboardButton("✅ Следующий студент", callback_data="next")])
+            keyboard.append([InlineKeyboardButton("⚙️ Панель управления", callback_data="admin")])
+
+        keyboard.append([InlineKeyboardButton("ℹ️ Помощь", callback_data="help")])
+
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await query.edit_message_text(welcome_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
@@ -546,10 +675,8 @@ def main():
         return
 
     try:
-        # Создаем Application
         application = Application.builder().token(TOKEN).build()
 
-        # Добавляем обработчики команд
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("help", help_command))
         application.add_handler(CommandHandler("join", join_queue))
@@ -557,14 +684,11 @@ def main():
         application.add_handler(CommandHandler("queue", show_queue))
         application.add_handler(CommandHandler("position", get_position))
         application.add_handler(CommandHandler("next", next_student))
+        application.add_handler(CommandHandler("admin", admin_panel))
 
-        # Добавляем обработчик текстовых сообщений
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_surname_input))
-
-        # Добавляем обработчик кнопок
         application.add_handler(CallbackQueryHandler(button_handler))
 
-        # Запускаем бота
         logger.info("🚀 Бот запущен на Railway...")
         application.run_polling()
         
