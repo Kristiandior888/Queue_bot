@@ -578,8 +578,12 @@ def add_pre_existing_students():
 
 # Главная функция
 def main():
-    # Замени 'YOUR_BOT_TOKEN' на токен твоего бота
-    TOKEN = "8470251755:AAF9WYUl1ugezSjwHdDhpNN-DSwHVtCPi3g"
+    # Получаем токен из переменных окружения
+    TOKEN = os.getenv("BOT_TOKEN")
+    
+    if not TOKEN:
+        print("❌ Ошибка: BOT_TOKEN не установлен!")
+        return
 
     application = Application.builder().token(TOKEN).build()
 
@@ -601,13 +605,15 @@ def main():
     # Добавляем обработчик кнопок
     application.add_handler(CallbackQueryHandler(button_handler))
 
-    # Добавляем очных студентов (раскомментируй следующую строку при первом запуске)
-    # add_pre_existing_students()
-
     # Запускаем бота
-    print("Бот запущен...")
-    application.run_polling()
+    print("🚀 Бот запущен на Railway...")
+    
+    try:
+        application.run_polling()
+    except Exception as e:
+        print(f"❌ Ошибка при запуске бота: {e}")
 
 
 if __name__ == '__main__':
+
     main()
