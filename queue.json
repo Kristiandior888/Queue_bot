@@ -1,0 +1,62 @@
+[
+  {
+    "user_id": null,
+    "username": "даня",
+    "first_name": "Даня",
+    "surname": "Пархоменко"
+  },
+  {
+    "user_id": null,
+    "username": "глеб",
+    "first_name": "Глеб",
+    "surname": "Сережкин"
+  },
+  {
+    "user_id": null,
+    "username": "кристина",
+    "first_name": "Кристина",
+    "surname": "Хабло"
+  },
+  {
+    "user_id": null,
+    "username": "сема",
+    "first_name": "Семен",
+    "surname": "Моисеев"
+  },
+  {
+    "user_id": null,
+    "username": "алиса",
+    "first_name": "Алиса",
+    "surname": "Янкелевская"
+  },
+  {
+    "user_id": null,
+    "username": "ромка",
+    "first_name": "РОМАН",
+    "surname": "Кузин"
+  },
+  {
+    "user_id": null,
+    "username": "леша",
+    "first_name": "Алексей",
+    "surname": "Сикорский"
+  },
+  {
+    "user_id": null,
+    "username": "аня",
+    "first_name": "Анна",
+    "surname": "Трунова"
+  },
+  {
+    "user_id": null,
+    "username": "паша",
+    "first_name": "Павел",
+    "surname": "Мезенцев"
+  },
+  {
+    "user_id": null,
+    "username": "саша",
+    "first_name": "Александр",
+    "surname": "Попов"
+  }
+]
